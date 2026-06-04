@@ -1,0 +1,145 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Medication Intake Tracker</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 760px; margin: 40px auto; padding: 20px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    button { font-size: 16px; padding: 12px 18px; border: none; border-radius: 8px; cursor: pointer; background: #2563eb; color: white; margin-right: 8px; }
+    button.secondary { background: #555; }
+    .status { display: inline-block; margin-top: 12px; font-size: 18px; font-weight: bold; }
+    textarea { width: 100%; height: 150px; margin-top: 16px; padding: 10px; font-size: 15px; }
+    .hidden { display: none; }
+    table { width: 100%; margin-top: 24px; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Medication Intake Tracker</h1>
+    <button onclick="recordIntake()">Record Intake</button>
+    <button class="secondary" onclick="toggleImport()">Load History</button>
+    <br>
+    <span class="status" id="hoursSinceLast">No intake recorded yet</span>
+    <div id="importBox" class="hidden">
+      <textarea id="historyText" placeholder="Paste history here, for example:
+23.05 19:00 (34 Stunden)
+25.05 7:30 (36.5 Stunden)"></textarea>
+      <br>
+      <button onclick="importHistory()">Import History</button>
+      <button class="secondary" onclick="clearAll()">Clear All</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Time</th>
+          <th>Hours since last intake</th>
+        </tr>
+      </thead>
+      <tbody id="log"></tbody>
+    </table>
+  </div>
+  <script>
+    const logEl = document.getElementById("log");
+    const hoursSinceLastEl = document.getElementById("hoursSinceLast");
+    const importBox = document.getElementById("importBox");
+    const historyText = document.getElementById("historyText");
+    let intakes = JSON.parse(localStorage.getItem("intakes")) || [];
+    function formatHours(ms) {
+      return (ms / (1000 * 60 * 60)).toFixed(2);
+    }
+    function saveIntakes() {
+      localStorage.setItem("intakes", JSON.stringify(intakes));
+    }
+    function sortIntakes() {
+      intakes.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    }
+    function recalculateHours() {
+      sortIntakes();
+      intakes = intakes.map((entry, index) => {
+        if (index === 0) {
+          entry.hoursSinceLast = "First intake";
+        } else {
+          const previous = new Date(intakes[index - 1].timestamp);
+          const current = new Date(entry.timestamp);
+          entry.hoursSinceLast = `${formatHours(current - previous)} hours`;
+        }
+        return entry;
+      });
+    }
+    function updateStatus() {
+      if (intakes.length === 0) {
+        hoursSinceLastEl.textContent = "No intake recorded yet";
+        return;
+      }
+      sortIntakes();
+      const lastIntake = new Date(intakes[intakes.length - 1].timestamp);
+      const now = new Date();
+      const hours = formatHours(now - lastIntake);
+      hoursSinceLastEl.textContent = `${hours} hours since last intake`;
+    }
+    function renderLog() {
+      recalculateHours();
+      saveIntakes();
+      logEl.innerHTML = "";
+      intakes.slice().reverse().forEach(entry => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${entry.date}</td>
+          <td>${entry.time}</td>
+          <td>${entry.hoursSinceLast}</td>
+        `;
+        logEl.appendChild(row);
+      });
+      updateStatus();
+    }
+    function recordIntake() {
+      const now = new Date();
+      const entry = {
+        timestamp: now.toISOString(),
+        date: now.toLocaleDateString(),
+        time: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        hoursSinceLast: ""
+      };
+      intakes.push(entry);
+      renderLog();
+    }
+    function toggleImport() {
+      importBox.classList.toggle("hidden");
+    }
+    function importHistory() {
+      const text = historyText.value;
+      const currentYear = new Date().getFullYear();
+      const lines = text.split("\n");
+      lines.forEach(line => {
+        const match = line.match(/(\d{1,2})\.(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+        if (!match) return;
+        const day = Number(match[1]);
+        const month = Number(match[2]) - 1;
+        const hour = Number(match[3]);
+        const minute = Number(match[4]);
+        const dateObj = new Date(currentYear, month, day, hour, minute);
+        const entry = {
+          timestamp: dateObj.toISOString(),
+          date: dateObj.toLocaleDateString(),
+          time: dateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          hoursSinceLast: ""
+        };
+        intakes.push(entry);
+      });
+      renderLog();
+      historyText.value = "";
+    }
+    function clearAll() {
+      if (!confirm("Delete all intake history?")) return;
+      intakes = [];
+      saveIntakes();
+      renderLog();
+    }
+    renderLog();
+    setInterval(updateStatus, 60000);
+  </script>
+</body>
