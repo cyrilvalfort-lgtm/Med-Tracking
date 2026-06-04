@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Medication Intake Tracker</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f7f7f7;
+    }
+    .card {
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    }
+    h1 {
+      text-align: center;
+    }
+    .record-area {
+      text-align: center;
+      margin: 30px 0;
+    }
+    .record-button {
+      font-size: 28px;
+      padding: 30px 44px;
+      border: none;
+      border-radius: 22px;
+      width: 85%;
+      max-width: 440px;
+      cursor: pointer;
+      color: white;
+      background: #2563eb;
+    }
+    .status {
+      margin-top: 18px;
+      font-size: 22px;
+      font-weight: bold;
+    }
+    .green { background: #16a34a; }
+    .yellow { background: #ca8a04; }
+    .red { background: #dc2626; }
+    .actions {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .secondary {
+      font-size: 16px;
+      padding: 12px 18px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      background: #555;
+      color: white;
+      margin: 4px;
+    }
+    textarea {
+      width: 100%;
+      height: 150px;
+      margin-top: 16px;
+      padding: 10px;
+      font-size: 15px;
+      box-sizing: border-box;
+    }
+    .hidden {
+      display: none;
+    }
+    .chart {
+      margin-top: 30px;
+    }
+    .chart-row {
+      display: flex;
+      align-items: center;
+      margin: 10px 0;
+      gap: 10px;
+    }
+    .chart-label {
+      width: 120px;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+    .bar-wrap {
+      flex: 1;
+      background: #eee;
+      border-radius: 8px;
+      overflow: hidden;
+      height: 28px;
+    }
+    .bar {
+      height: 100%;
+      color: white;
+      font-size: 13px;
+      line-height: 28px;
+      padding-left: 8px;
+      box-sizing: border-box;
+      min-width: 36px;
+    }
+    table {
+      width: 100%;
+      margin-top: 24px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      border-bottom: 1px solid #ddd;
+      padding: 10px;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Medication Intake Tracker</h1>
+    <div class="record-area">
+      <button id="recordButton" class="record-button" onclick="recordIntake()">
+        Record Intake
+      </button>
+      <div class="status" id="hoursSinceLast">No intake recorded yet</div>
+    </div>
+    <div class="actions">
+      <button class="secondary" onclick="toggleImport()">Load History</button>
+      <button class="secondary" onclick="clearAll()">Clear All</button>
+    </div>
+    <div id="importBox" class="hidden">
+      <textarea id="historyText" placeholder="Paste history here:
+23.05 19:00 (34 Stunden)
+25.05 7:30 (36.5 Stunden)
+26.05 19:00 (35,5 Stunden)"></textarea>
+      <br>
+      <button class="secondary" onclick="importHistory()">Import History</button>
+    </div>
+    <div class="chart">
+      <h2>Trend</h2>
+      <div id="chart"></div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Time</th>
+          <th>Hours since last intake</th>
+        </tr>
+      </thead>
+      <tbody id="log"></tbody>
+    </table>
+  </div>
+  <script>
+    const logEl = document.getElementById("log");
+    const chartEl = document.getElementById("chart");
+    const hoursSinceLastEl = document.getElementById("hoursSinceLast");
+    const recordButton = document.getElementById("recordButton");
+    const importBox = document.getElementById("importBox");
+    const historyText = document.getElementById("historyText");
+    let intakes = JSON.parse(localStorage.getItem("intakes")) || [];
+    function formatHours(ms) {
+      return ms / (1000 * 60 * 60);
+    }
+    function displayHours(hours) {
+      return hours.toFixed(2) + " hours";
+    }
+    function getColorClass(hours) {
+      if (hours < 24) return "green";
+      if (hours <= 48) return "yellow";
+      return "red";
+    }
+    function saveIntakes() {
+      localStorage.setItem("intakes", JSON.stringify(intakes));
+    }
+    function sortIntakes() {
+      intakes.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    }
+    function recalculateHours() {
+      sortIntakes();
+      intakes = intakes.map((entry, index) => {
+        if (index === 0) {
+          entry.hoursSinceLast = "First intake";
+          entry.hoursValue = null;
+        } else {
+          const previous = new Date(intakes[index - 1].timestamp);
+          const current = new Date(entry.timestamp);
+          const hours = formatHours(current - previous);
+          entry.hoursSinceLast = displayHours(hours);
+          entry.hoursValue = hours;
+        }
+        return entry;
+      });
+    }
+    function updateStatus() {
+      if (intakes.length === 0) {
+        hoursSinceLastEl.textContent = "No intake recorded yet";
+        recordButton.className = "record-button";
+        return;
+      }
+      sortIntakes();
+      const lastIntake = new Date(intakes[intakes.length - 1].timestamp);
+      const now = new Date();
+      const hours = formatHours(now - lastIntake);
+      hoursSinceLastEl.textContent = displayHours(hours) + " since last intake";
+      recordButton.className = "record-button " + getColorClass(hours);
+    }
+    function renderLog() {
+      recalculateHours();
+      saveIntakes();
+      logEl.innerHTML = "";
+      intakes.slice().reverse().forEach(entry => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${entry.date}</td>
+          <td>${entry.time}</td>
+          <td>${entry.hoursSinceLast}</td>
+        `;
+        logEl.appendChild(row);
+      });
+      renderChart();
+      updateStatus();
+    }
+    function renderChart() {
+      chartEl.innerHTML = "";
+      const chartData = intakes.filter(entry => entry.hoursValue !== null);
+      if (chartData.length === 0) {
+        chartEl.innerHTML = "<p>No trend data yet.</p>";
+        return;
+      }
+      const maxHours = Math.max(...chartData.map(entry => entry.hoursValue));
+      chartData.forEach(entry => {
+        const width = Math.max((entry.hoursValue / maxHours) * 100, 5);
+        const colorClass = getColorClass(entry.hoursValue);
+        const row = document.createElement("div");
+        row.className = "chart-row";
+        row.innerHTML = `
+          <div class="chart-label">${entry.date}<br>${entry.time}</div>
+          <div class="bar-wrap">
+            <div class="bar ${colorClass}" style="width: ${width}%">
+              ${entry.hoursValue.toFixed(1)}h
+            </div>
+          </div>
+        `;
+        chartEl.appendChild(row);
+      });
+    }
+    function recordIntake() {
+      const now = new Date();
+      const entry = {
+        timestamp: now.toISOString(),
+        date: now.toLocaleDateString(),
+        time: now.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit"
+        }),
+        hoursSinceLast: "",
+        hoursValue: null
+      };
+      intakes.push(entry);
+      renderLog();
+    }
+    function toggleImport() {
+      importBox.classList.toggle("hidden");
+    }
+    function importHistory() {
+      const text = historyText.value;
+      const currentYear = new Date().getFullYear();
+      const lines = text.split("\n");
+      lines.forEach(line => {
+        const match = line.match(/(\d{1,2})\.(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+        if (!match) return;
+        const day = Number(match[1]);
+        const month = Number(match[2]) - 1;
+        const hour = Number(match[3]);
+        const minute = Number(match[4]);
+        const dateObj = new Date(currentYear, month, day, hour, minute);
+        intakes.push({
+          timestamp: dateObj.toISOString(),
+          date: dateObj.toLocaleDateString(),
+          time: dateObj.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit"
+          }),
+          hoursSinceLast: "",
+          hoursValue: null
+        });
+      });
+      historyText.value = "";
+      renderLog();
+    }
+    function clearAll() {
+      if (!confirm("Delete all intake history?")) return;
+      intakes = [];
+      saveIntakes();
+      renderLog();
+    }
+    renderLog();
+    setInterval(() => {
+      updateStatus();
+    }, 60000);
+  </script>
+</body>
+</html>
