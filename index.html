@@ -164,9 +164,9 @@
       return hours.toFixed(2) + " hours";
     }
     function getColorClass(hours) {
-      if (hours < 24) return "green";
-      if (hours <= 48) return "yellow";
-      return "red";
+      if (hours < 24) return "red";
+      if (hours <= 44) return "yellow";
+      return "green";
     }
     function saveIntakes() {
       localStorage.setItem("intakes", JSON.stringify(intakes));
