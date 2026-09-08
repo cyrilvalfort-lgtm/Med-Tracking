@@ -102,7 +102,6 @@
       font-size: 12px;
       color: #94a3b8;
       margin: 8px 0;
-      position: relative;
     }
 
     .status {
@@ -223,12 +222,12 @@
       <button id="recordButton" class="record-button" onclick="recordIntake()">
         Record Intake
       </button>
-      
+
       <div>
         <button class="past-intake-btn" onclick="togglePastPanel()">+ Log Missed Dose</button>
       </div>
 
-      <!-- Missed dose entry form -->
+      <!-- Missed dose entry panel -->
       <div id="pastPanel" class="past-panel hidden">
         <div class="past-panel-row">
           <label for="pastHoursInput">Option 1: Log by hours ago</label>
@@ -240,7 +239,7 @@
 
         <div class="past-panel-divider">— or —</div>
 
-        <div class="past-panel-row">
+        <div class="past-panel-row" style="margin-bottom: 0;">
           <label for="pastDateTimeInput">Option 2: Select exact date & time</label>
           <div style="display: flex; gap: 6px;">
             <input type="datetime-local" id="pastDateTimeInput">
@@ -284,7 +283,36 @@
     <div class="actions">
       <button class="secondary" onclick="toggleImport()">Load History</button>
       <button class="secondary" onclick="exportCSV()">Export CSV</button>
+      <button class="secondary" onclick="toggleThresholdSettings()">Thresholds</button>
       <button class="secondary" onclick="clearAll()">Clear Log</button>
+    </div>
+
+    <!-- Threshold configuration panel -->
+    <div id="thresholdBox" class="hidden past-panel">
+      <div style="font-size: 13px; font-weight: bold; margin-bottom: 8px; text-align: center;">
+        Hour Thresholds
+      </div>
+
+      <div style="display: flex; gap: 12px; justify-content: center; align-items: center;">
+        <div style="text-align: center;">
+          <label for="thresholdRedInput" style="display: block; font-size: 11px; color: #dc2626; font-weight: bold;">Red &lt;</label>
+          <input type="number" id="thresholdRedInput" min="1" step="0.5" style="width: 70px; padding: 5px; text-align: center; border: 1px solid #cbd5e1; border-radius: 6px;">
+        </div>
+
+        <div style="text-align: center;">
+          <label for="thresholdGreenInput" style="display: block; font-size: 11px; color: #16a34a; font-weight: bold;">Green &ge;</label>
+          <input type="number" id="thresholdGreenInput" min="1" step="0.5" style="width: 70px; padding: 5px; text-align: center; border: 1px solid #cbd5e1; border-radius: 6px;">
+        </div>
+      </div>
+
+      <div style="font-size: 11px; color: #64748b; text-align: center; margin-top: 6px;">
+        Intervals between these values will be marked orange/yellow.
+      </div>
+
+      <div style="text-align: center; margin-top: 10px;">
+        <button class="secondary" style="font-size: 12px; padding: 6px 12px;" onclick="saveThresholds()">Save</button>
+        <button class="secondary" style="font-size: 12px; padding: 6px 12px;" onclick="resetThresholds()">Reset (24h / 44h)</button>
+      </div>
     </div>
 
     <div id="importBox" class="hidden">
@@ -316,13 +344,21 @@
     const recordButton = document.getElementById("recordButton");
     const importBox = document.getElementById("importBox");
     const historyText = document.getElementById("historyText");
+
     const pastPanel = document.getElementById("pastPanel");
     const pastHoursInput = document.getElementById("pastHoursInput");
     const pastDateTimeInput = document.getElementById("pastDateTimeInput");
 
+    const thresholdBox = document.getElementById("thresholdBox");
+    const thresholdRedInput = document.getElementById("thresholdRedInput");
+    const thresholdGreenInput = document.getElementById("thresholdGreenInput");
+
     const currentIntervalEl = document.getElementById("currentInterval");
     const averageIntervalEl = document.getElementById("averageInterval");
     const greenPercentEl = document.getElementById("greenPercent");
+
+    const DEFAULT_THRESHOLDS = { redMax: 24, greenMin: 44 };
+    let thresholds = JSON.parse(localStorage.getItem("tracker_thresholds")) || { ...DEFAULT_THRESHOLDS };
 
     let intakes = JSON.parse(localStorage.getItem("intakes")) || [];
     let selectedRange = 30;
@@ -336,20 +372,20 @@
     }
 
     function getColor(hours) {
-      if (hours < 24) return "#dc2626";
-      if (hours < 44) return "#ca8a04";
+      if (hours < thresholds.redMax) return "#dc2626";
+      if (hours < thresholds.greenMin) return "#ca8a04";
       return "#16a34a";
     }
 
     function getColorClass(hours) {
-      if (hours < 24) return "red";
-      if (hours < 44) return "yellow";
+      if (hours < thresholds.redMax) return "red";
+      if (hours < thresholds.greenMin) return "yellow";
       return "green";
     }
 
     function getTextClass(hours) {
-      if (hours < 24) return "text-red";
-      if (hours < 44) return "text-yellow";
+      if (hours < thresholds.redMax) return "text-red";
+      if (hours < thresholds.greenMin) return "text-yellow";
       return "text-green";
     }
 
@@ -426,7 +462,7 @@
       }
 
       const average = values.reduce((a, b) => a + b, 0) / values.length;
-      const greens = values.filter(v => v >= 44).length;
+      const greens = values.filter(v => v >= thresholds.greenMin).length;
       const greenPercent = Math.round((greens / values.length) * 100);
 
       averageIntervalEl.textContent = displayHours(average);
@@ -480,7 +516,8 @@
       chartEl.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
       const values = data.map(d => d.hoursValue);
-      const maxValue = Math.max(60, Math.ceil(Math.max(...values) / 10) * 10);
+      const topTarget = Math.max(thresholds.greenMin + 10, ...values);
+      const maxValue = Math.max(60, Math.ceil(topTarget / 10) * 10);
       const minValue = 0;
 
       function xPos(index) {
@@ -498,13 +535,18 @@
 
       let svg = "";
 
-      [0, 24, 44, maxValue].forEach(value => {
-        const y = yPos(value);
-        const label = value === 44 ? "44h" : value + "h";
-        const color = value === 44 ? "#16a34a" : "#ddd";
-        const dash = value === 44 ? "5,5" : "";
+      const referenceValues = [0, thresholds.redMax, thresholds.greenMin, maxValue];
 
-        svg += svgLine(padding.left, y, width - padding.right, y, color, value === 44 ? 2 : 1, dash);
+      referenceValues.forEach(value => {
+        const y = yPos(value);
+        const isGreen = value === thresholds.greenMin;
+        const isRed = value === thresholds.redMax;
+
+        const label = value + "h";
+        const color = isGreen ? "#16a34a" : isRed ? "#dc2626" : "#ddd";
+        const dash = (isGreen || isRed) ? "5,5" : "";
+
+        svg += svgLine(padding.left, y, width - padding.right, y, color, (isGreen || isRed) ? 2 : 1, dash);
         svg += `<text x="8" y="${y + 4}" font-size="12" fill="#555">${label}</text>`;
       });
 
@@ -594,7 +636,6 @@
     function togglePastPanel() {
       const isHidden = pastPanel.classList.toggle("hidden");
       if (!isHidden) {
-        // Prepopulate the datetime picker with the current local time
         const now = new Date();
         const localISO = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
           .toISOString()
@@ -629,6 +670,42 @@
 
       pastDateTimeInput.value = "";
       pastPanel.classList.add("hidden");
+    }
+
+    function toggleThresholdSettings() {
+      const isHidden = thresholdBox.classList.toggle("hidden");
+      if (!isHidden) {
+        thresholdRedInput.value = thresholds.redMax;
+        thresholdGreenInput.value = thresholds.greenMin;
+      }
+    }
+
+    function saveThresholds() {
+      const redVal = parseFloat(thresholdRedInput.value);
+      const greenVal = parseFloat(thresholdGreenInput.value);
+
+      if (isNaN(redVal) || isNaN(greenVal) || redVal <= 0 || greenVal <= redVal) {
+        alert("Please enter valid numbers. The green threshold must be greater than the red threshold.");
+        return;
+      }
+
+      thresholds.redMax = redVal;
+      thresholds.greenMin = greenVal;
+      localStorage.setItem("tracker_thresholds", JSON.stringify(thresholds));
+
+      thresholdBox.classList.add("hidden");
+      renderLog();
+    }
+
+    function resetThresholds() {
+      thresholds = { ...DEFAULT_THRESHOLDS };
+      localStorage.setItem("tracker_thresholds", JSON.stringify(thresholds));
+
+      thresholdRedInput.value = thresholds.redMax;
+      thresholdGreenInput.value = thresholds.greenMin;
+
+      thresholdBox.classList.add("hidden");
+      renderLog();
     }
 
     function toggleImport() {
