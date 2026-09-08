@@ -316,9 +316,9 @@
     </div>
 
     <div id="importBox" class="hidden">
-      <textarea id="historyText" placeholder="Paste history here:
-23.05 19:00 (34 Stunden)
-25.05 7:30 (36.5 Stunden)
+      <textarea id="historyText" placeholder="Paste history or CSV export here:
+23/05/2026,&quot;19:00&quot;,&quot;First intake&quot;
+25/05/2026,&quot;07:30&quot;,&quot;36.50&quot;
 26.05 19:00 (35,5 Stunden)"></textarea>
       <br>
       <button class="secondary" onclick="importHistory()">Import History</button>
@@ -713,35 +713,68 @@
     }
 
     function importHistory() {
-      const text = historyText.value;
+      const text = historyText.value.trim();
+      if (!text) return;
+
       const currentYear = new Date().getFullYear();
       const lines = text.split("\n");
+      let importedCount = 0;
 
       lines.forEach(line => {
-        const match = line.match(/(\d{1,2})\.(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+        const cleanLine = line.trim();
+        if (!cleanLine || cleanLine.toLowerCase().startsWith('"date') || cleanLine.toLowerCase().startsWith('date')) {
+          return;
+        }
 
-        if (!match) return;
+        let dateObj = null;
 
-        const day = Number(match[1]);
-        const month = Number(match[2]) - 1;
-        const hour = Number(match[3]);
-        const minute = Number(match[4]);
+        // Pattern 1: CSV Export Format -> 23/05/2026,"19:00",... or "23/05/2026","19:00",...
+        const csvMatch = cleanLine.match(/["']?(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})["']?\s*[,;\t]\s*["']?(\d{1,2}):(\d{2})/);
 
-        const dateObj = new Date(currentYear, month, day, hour, minute);
+        if (csvMatch) {
+          const day = Number(csvMatch[1]);
+          const month = Number(csvMatch[2]) - 1;
+          const year = Number(csvMatch[3]);
+          const hour = Number(csvMatch[4]);
+          const minute = Number(csvMatch[5]);
 
-        intakes.push({
-          timestamp: dateObj.toISOString(),
-          date: dateObj.toLocaleDateString(),
-          time: dateObj.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit"
-          }),
-          hoursSinceLast: "",
-          hoursValue: null
-        });
+          dateObj = new Date(year, month, day, hour, minute);
+        } else {
+          // Pattern 2: Informal Format -> 23.05 19:00 (34 Stunden)
+          const manualMatch = cleanLine.match(/(\d{1,2})[\/\.-](\d{1,2})\s+(\d{1,2}):(\d{2})/);
+
+          if (manualMatch) {
+            const day = Number(manualMatch[1]);
+            const month = Number(manualMatch[2]) - 1;
+            const hour = Number(manualMatch[3]);
+            const minute = Number(manualMatch[4]);
+
+            dateObj = new Date(currentYear, month, day, hour, minute);
+          }
+        }
+
+        if (dateObj && !isNaN(dateObj.getTime())) {
+          intakes.push({
+            timestamp: dateObj.toISOString(),
+            date: dateObj.toLocaleDateString(),
+            time: dateObj.toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit"
+            }),
+            hoursSinceLast: "",
+            hoursValue: null
+          });
+          importedCount++;
+        }
       });
 
+      if (importedCount === 0) {
+        alert("Could not recognize any valid dates. Please verify the format.");
+        return;
+      }
+
       historyText.value = "";
+      importBox.classList.add("hidden");
       renderLog();
     }
 
