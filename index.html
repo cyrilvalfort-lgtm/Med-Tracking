@@ -110,6 +110,24 @@
       font-weight: bold;
     }
 
+    .next-targets {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #475569;
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .target-badge {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 6px 12px;
+      display: inline-block;
+    }
+
     .green { background: #16a34a; }
     .yellow { background: #ca8a04; }
     .red { background: #dc2626; }
@@ -210,6 +228,52 @@
       border-bottom: 1px solid #ddd;
       padding: 9px 6px;
       text-align: left;
+      vertical-align: middle;
+    }
+
+    .row-actions {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .icon-btn {
+      background: transparent;
+      border: 1px solid #cbd5e1;
+      color: #475569;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 13px;
+      cursor: pointer;
+      margin-left: 4px;
+    }
+
+    .icon-btn:hover {
+      background: #f1f5f9;
+      color: #0f172a;
+    }
+
+    .icon-btn.delete:hover {
+      background: #fef2f2;
+      color: #dc2626;
+      border-color: #fecaca;
+    }
+
+    .icon-btn.save {
+      background: #2563eb;
+      color: white;
+      border-color: #2563eb;
+    }
+
+    .icon-btn.save:hover {
+      background: #1d4ed8;
+    }
+
+    .edit-datetime-input {
+      padding: 5px 7px;
+      font-size: 13px;
+      border: 1px solid #94a3b8;
+      border-radius: 6px;
+      max-width: 195px;
     }
   </style>
 </head>
@@ -249,6 +313,7 @@
       </div>
 
       <div class="status" id="hoursSinceLast">No intake recorded yet</div>
+      <div class="next-targets" id="nextTargets"></div>
     </div>
 
     <div class="stats">
@@ -329,7 +394,8 @@
         <tr>
           <th>Date</th>
           <th>Time</th>
-          <th>Hours since last intake</th>
+          <th>Hours since last</th>
+          <th style="text-align: right;">Actions</th>
         </tr>
       </thead>
       <tbody id="log"></tbody>
@@ -341,6 +407,7 @@
     const chartEl = document.getElementById("trendChart");
     const tooltipEl = document.getElementById("tooltip");
     const hoursSinceLastEl = document.getElementById("hoursSinceLast");
+    const nextTargetsEl = document.getElementById("nextTargets");
     const recordButton = document.getElementById("recordButton");
     const importBox = document.getElementById("importBox");
     const historyText = document.getElementById("historyText");
@@ -362,6 +429,7 @@
 
     let intakes = JSON.parse(localStorage.getItem("intakes")) || [];
     let selectedRange = 30;
+    let editingIndex = null;
 
     function hoursFromMs(ms) {
       return ms / (1000 * 60 * 60);
@@ -369,6 +437,29 @@
 
     function displayHours(hours) {
       return hours.toFixed(1) + "h";
+    }
+
+    function toLocalISOString(dateObj) {
+      return new Date(dateObj.getTime() - dateObj.getTimezoneOffset() * 60000)
+        .toISOString()
+        .slice(0, 16);
+    }
+
+    function formatTargetDateTime(targetDate) {
+      const now = new Date();
+      const tomorrow = new Date(now);
+      tomorrow.setDate(now.getDate() + 1);
+
+      const timeStr = targetDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+      if (targetDate.toDateString() === now.toDateString()) {
+        return `Today at ${timeStr}`;
+      } else if (targetDate.toDateString() === tomorrow.toDateString()) {
+        return `Tomorrow at ${timeStr}`;
+      } else {
+        const dateStr = targetDate.toLocaleDateString([], { weekday: "short", day: "2-digit", month: "2-digit" });
+        return `${dateStr} at ${timeStr}`;
+      }
     }
 
     function getColor(hours) {
@@ -401,13 +492,19 @@
       sortIntakes();
 
       intakes = intakes.map((entry, index) => {
+        const d = new Date(entry.timestamp);
+        entry.date = d.toLocaleDateString();
+        entry.time = d.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit"
+        });
+
         if (index === 0) {
           entry.hoursSinceLast = "First intake";
           entry.hoursValue = null;
         } else {
           const previous = new Date(intakes[index - 1].timestamp);
-          const current = new Date(entry.timestamp);
-          const hours = hoursFromMs(current - previous);
+          const hours = hoursFromMs(d - previous);
 
           entry.hoursSinceLast = displayHours(hours);
           entry.hoursValue = hours;
@@ -421,8 +518,10 @@
       if (intakes.length === 0) {
         hoursSinceLastEl.textContent = "No intake recorded yet";
         hoursSinceLastEl.className = "status";
+        nextTargetsEl.innerHTML = "";
         recordButton.className = "record-button";
         currentIntervalEl.textContent = "—";
+        currentIntervalEl.className = "stat-value";
         return;
       }
 
@@ -438,6 +537,45 @@
 
       currentIntervalEl.textContent = displayHours(hours);
       currentIntervalEl.className = "stat-value " + getTextClass(hours);
+
+      // Next Zone Countdown Calculation
+      const yellowTime = new Date(lastIntake.getTime() + thresholds.redMax * 3600000);
+      const greenTime = new Date(lastIntake.getTime() + thresholds.greenMin * 3600000);
+
+      let badgesHTML = "";
+
+      if (hours < thresholds.redMax) {
+        const remYellow = displayHours(thresholds.redMax - hours);
+        const remGreen = displayHours(thresholds.greenMin - hours);
+        badgesHTML += `
+          <div class="target-badge">
+            <span class="text-yellow" style="font-weight:bold;">Yellow (${thresholds.redMax}h):</span>
+            ${formatTargetDateTime(yellowTime)} <em>(in ${remYellow})</em>
+          </div>
+          <div class="target-badge">
+            <span class="text-green" style="font-weight:bold;">Green (${thresholds.greenMin}h):</span>
+            ${formatTargetDateTime(greenTime)} <em>(in ${remGreen})</em>
+          </div>
+        `;
+      } else if (hours < thresholds.greenMin) {
+        const remGreen = displayHours(thresholds.greenMin - hours);
+        badgesHTML += `
+          <div class="target-badge">
+            <span class="text-green" style="font-weight:bold;">Next Green (${thresholds.greenMin}h):</span>
+            ${formatTargetDateTime(greenTime)} <em>(in ${remGreen})</em>
+          </div>
+        `;
+      } else {
+        const overGreen = displayHours(hours - thresholds.greenMin);
+        badgesHTML += `
+          <div class="target-badge">
+            <span class="text-green" style="font-weight:bold;">✓ Green zone reached</span>
+            (${overGreen} past ${thresholds.greenMin}h target)
+          </div>
+        `;
+      }
+
+      nextTargetsEl.innerHTML = badgesHTML;
     }
 
     function getFilteredChartData() {
@@ -457,377 +595,11 @@
 
       if (values.length === 0) {
         averageIntervalEl.textContent = "—";
+        averageIntervalEl.className = "stat-value";
         greenPercentEl.textContent = "—";
+        greenPercentEl.className = "stat-value";
         return;
       }
 
       const average = values.reduce((a, b) => a + b, 0) / values.length;
-      const greens = values.filter(v => v >= thresholds.greenMin).length;
-      const greenPercent = Math.round((greens / values.length) * 100);
-
-      averageIntervalEl.textContent = displayHours(average);
-      averageIntervalEl.className = "stat-value " + getTextClass(average);
-
-      greenPercentEl.textContent = greenPercent + "%";
-      greenPercentEl.className =
-        "stat-value " +
-        (greenPercent >= 70 ? "text-green" : greenPercent >= 40 ? "text-yellow" : "text-red");
-    }
-
-    function renderLog() {
-      recalculateHours();
-      saveIntakes();
-
-      logEl.innerHTML = "";
-
-      intakes.slice().reverse().forEach(entry => {
-        const row = document.createElement("tr");
-
-        row.innerHTML = `
-          <td>${entry.date}</td>
-          <td>${entry.time}</td>
-          <td>${entry.hoursSinceLast}</td>
-        `;
-
-        logEl.appendChild(row);
-      });
-
-      renderChart();
-      updateStats();
-      updateStatus();
-    }
-
-    function renderChart() {
-      const data = getFilteredChartData();
-      chartEl.innerHTML = "";
-      tooltipEl.textContent = "";
-
-      if (data.length === 0) {
-        chartEl.innerHTML = `<text x="20" y="110" fill="#666">No trend data yet.</text>`;
-        return;
-      }
-
-      const width = 700;
-      const height = 230;
-      const padding = { top: 15, right: 18, bottom: 38, left: 45 };
-      const chartWidth = width - padding.left - padding.right;
-      const chartHeight = height - padding.top - padding.bottom;
-
-      chartEl.setAttribute("viewBox", `0 0 ${width} ${height}`);
-
-      const values = data.map(d => d.hoursValue);
-      const topTarget = Math.max(thresholds.greenMin + 10, ...values);
-      const maxValue = Math.max(60, Math.ceil(topTarget / 10) * 10);
-      const minValue = 0;
-
-      function xPos(index) {
-        if (data.length === 1) return padding.left + chartWidth / 2;
-        return padding.left + (index / (data.length - 1)) * chartWidth;
-      }
-
-      function yPos(value) {
-        return padding.top + chartHeight - ((value - minValue) / (maxValue - minValue)) * chartHeight;
-      }
-
-      function svgLine(x1, y1, x2, y2, color, width = 1, dash = "") {
-        return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${width}" stroke-dasharray="${dash}" />`;
-      }
-
-      let svg = "";
-
-      const referenceValues = [0, thresholds.redMax, thresholds.greenMin, maxValue];
-
-      referenceValues.forEach(value => {
-        const y = yPos(value);
-        const isGreen = value === thresholds.greenMin;
-        const isRed = value === thresholds.redMax;
-
-        const label = value + "h";
-        const color = isGreen ? "#16a34a" : isRed ? "#dc2626" : "#ddd";
-        const dash = (isGreen || isRed) ? "5,5" : "";
-
-        svg += svgLine(padding.left, y, width - padding.right, y, color, (isGreen || isRed) ? 2 : 1, dash);
-        svg += `<text x="8" y="${y + 4}" font-size="12" fill="#555">${label}</text>`;
-      });
-
-      svg += svgLine(padding.left, padding.top, padding.left, height - padding.bottom, "#999");
-      svg += svgLine(padding.left, height - padding.bottom, width - padding.right, height - padding.bottom, "#999");
-
-      const points = data.map((entry, index) => ({
-        x: xPos(index),
-        y: yPos(entry.hoursValue),
-        entry
-      }));
-
-      for (let i = 0; i < points.length - 1; i++) {
-        svg += svgLine(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y, "#334155", 2);
-      }
-
-      points.forEach((point, index) => {
-        const color = getColor(point.entry.hoursValue);
-
-        svg += `
-          <circle
-            cx="${point.x}"
-            cy="${point.y}"
-            r="7"
-            fill="${color}"
-            onclick="showPoint(${index})"
-          />
-        `;
-
-        if (index === 0 || index === points.length - 1 || data.length <= 6) {
-          svg += `
-            <text
-              x="${point.x}"
-              y="${height - 14}"
-              font-size="11"
-              text-anchor="middle"
-              fill="#555"
-            >${point.entry.date}</text>
-          `;
-        }
-      });
-
-      chartEl.innerHTML = svg;
-      window.currentChartPoints = data;
-    }
-
-    function showPoint(index) {
-      const entry = window.currentChartPoints[index];
-
-      tooltipEl.textContent =
-        entry.date + " " + entry.time + " — " + displayHours(entry.hoursValue);
-      tooltipEl.style.color = getColor(entry.hoursValue);
-    }
-
-    function setRange(range) {
-      selectedRange = range;
-
-      ["7", "30", "90", "all"].forEach(id => {
-        document.getElementById("range" + id).classList.remove("active");
-      });
-
-      document.getElementById("range" + range).classList.add("active");
-
-      renderChart();
-      updateStats();
-    }
-
-    function addIntakeEntry(dateObj) {
-      intakes.push({
-        timestamp: dateObj.toISOString(),
-        date: dateObj.toLocaleDateString(),
-        time: dateObj.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit"
-        }),
-        hoursSinceLast: "",
-        hoursValue: null
-      });
-
-      renderLog();
-    }
-
-    function recordIntake() {
-      addIntakeEntry(new Date());
-    }
-
-    function togglePastPanel() {
-      const isHidden = pastPanel.classList.toggle("hidden");
-      if (!isHidden) {
-        const now = new Date();
-        const localISO = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-          .toISOString()
-          .slice(0, 16);
-        pastDateTimeInput.value = localISO;
-      }
-    }
-
-    function submitPastHours() {
-      const hours = parseFloat(pastHoursInput.value);
-      if (isNaN(hours) || hours <= 0) {
-        alert("Please enter a valid number of hours.");
-        return;
-      }
-
-      const pastDate = new Date(Date.now() - hours * 60 * 60 * 1000);
-      addIntakeEntry(pastDate);
-
-      pastHoursInput.value = "";
-      pastPanel.classList.add("hidden");
-    }
-
-    function submitPastDateTime() {
-      const val = pastDateTimeInput.value;
-      if (!val) {
-        alert("Please select a date and time.");
-        return;
-      }
-
-      const pastDate = new Date(val);
-      addIntakeEntry(pastDate);
-
-      pastDateTimeInput.value = "";
-      pastPanel.classList.add("hidden");
-    }
-
-    function toggleThresholdSettings() {
-      const isHidden = thresholdBox.classList.toggle("hidden");
-      if (!isHidden) {
-        thresholdRedInput.value = thresholds.redMax;
-        thresholdGreenInput.value = thresholds.greenMin;
-      }
-    }
-
-    function saveThresholds() {
-      const redVal = parseFloat(thresholdRedInput.value);
-      const greenVal = parseFloat(thresholdGreenInput.value);
-
-      if (isNaN(redVal) || isNaN(greenVal) || redVal <= 0 || greenVal <= redVal) {
-        alert("Please enter valid numbers. The green threshold must be greater than the red threshold.");
-        return;
-      }
-
-      thresholds.redMax = redVal;
-      thresholds.greenMin = greenVal;
-      localStorage.setItem("tracker_thresholds", JSON.stringify(thresholds));
-
-      thresholdBox.classList.add("hidden");
-      renderLog();
-    }
-
-    function resetThresholds() {
-      thresholds = { ...DEFAULT_THRESHOLDS };
-      localStorage.setItem("tracker_thresholds", JSON.stringify(thresholds));
-
-      thresholdRedInput.value = thresholds.redMax;
-      thresholdGreenInput.value = thresholds.greenMin;
-
-      thresholdBox.classList.add("hidden");
-      renderLog();
-    }
-
-    function toggleImport() {
-      importBox.classList.toggle("hidden");
-    }
-
-    function importHistory() {
-      const text = historyText.value.trim();
-      if (!text) return;
-
-      const currentYear = new Date().getFullYear();
-      const lines = text.split("\n");
-      let importedCount = 0;
-
-      lines.forEach(line => {
-        const cleanLine = line.trim();
-        if (!cleanLine || cleanLine.toLowerCase().startsWith('"date') || cleanLine.toLowerCase().startsWith('date')) {
-          return;
-        }
-
-        let dateObj = null;
-
-        // Pattern 1: CSV Export Format -> 23/05/2026,"19:00",... or "23/05/2026","19:00",...
-        const csvMatch = cleanLine.match(/["']?(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})["']?\s*[,;\t]\s*["']?(\d{1,2}):(\d{2})/);
-
-        if (csvMatch) {
-          const day = Number(csvMatch[1]);
-          const month = Number(csvMatch[2]) - 1;
-          const year = Number(csvMatch[3]);
-          const hour = Number(csvMatch[4]);
-          const minute = Number(csvMatch[5]);
-
-          dateObj = new Date(year, month, day, hour, minute);
-        } else {
-          // Pattern 2: Informal Format -> 23.05 19:00 (34 Stunden)
-          const manualMatch = cleanLine.match(/(\d{1,2})[\/\.-](\d{1,2})\s+(\d{1,2}):(\d{2})/);
-
-          if (manualMatch) {
-            const day = Number(manualMatch[1]);
-            const month = Number(manualMatch[2]) - 1;
-            const hour = Number(manualMatch[3]);
-            const minute = Number(manualMatch[4]);
-
-            dateObj = new Date(currentYear, month, day, hour, minute);
-          }
-        }
-
-        if (dateObj && !isNaN(dateObj.getTime())) {
-          intakes.push({
-            timestamp: dateObj.toISOString(),
-            date: dateObj.toLocaleDateString(),
-            time: dateObj.toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit"
-            }),
-            hoursSinceLast: "",
-            hoursValue: null
-          });
-          importedCount++;
-        }
-      });
-
-      if (importedCount === 0) {
-        alert("Could not recognize any valid dates. Please verify the format.");
-        return;
-      }
-
-      historyText.value = "";
-      importBox.classList.add("hidden");
-      renderLog();
-    }
-
-    function exportCSV() {
-      if (intakes.length === 0) {
-        alert("No data to export.");
-        return;
-      }
-
-      recalculateHours();
-
-      const rows = [
-        ["Date", "Time", "Hours since last intake"]
-      ];
-
-      intakes.forEach(entry => {
-        rows.push([
-          entry.date,
-          entry.time,
-          entry.hoursValue === null ? "First intake" : entry.hoursValue.toFixed(2)
-        ]);
-      });
-
-      const csv = rows
-        .map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(","))
-        .join("\n");
-
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "medication-intake-log.csv";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      URL.revokeObjectURL(url);
-    }
-
-    function clearAll() {
-      if (!confirm("Delete all intake history?")) return;
-
-      intakes = [];
-      saveIntakes();
-      renderLog();
-    }
-
-    renderLog();
-
-    setInterval(() => {
-      updateStatus();
-    }, 60000);
-  </script>
-</body>
-</html>
+      const greens = values.
